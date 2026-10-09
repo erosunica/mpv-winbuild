@@ -1,0 +1,70 @@
+name: Publish CRT reference
+run-name: "Publish CRT reference (${{ inputs.payload_branch }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      payload_branch:
+        description: "Temporary branch containing release-assets and their SHA256SUMS.txt"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate delivery branch
+        env:
+          PAYLOAD_BRANCH: ${{ inputs.payload_branch }}
+        run: |
+          [[ "$PAYLOAD_BRANCH" =~ ^codex/crt-reference-assets/[a-zA-Z0-9._-]+$ ]]
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.payload_branch }}
+          persist-credentials: false
+
+      - name: Verify packages
+        working-directory: release-assets
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import re
+          import zipfile
+
+          lines = Path('SHA256SUMS.txt').read_text().splitlines()
+          assert len(lines) == 2, 'Expected the player and source ZIP checksums'
+          names = []
+          for line in lines:
+              digest, name = line.split('  ', 1)
+              assert re.fullmatch(r'[0-9a-f]{64}', digest)
+              assert re.fullmatch(r'mpv-(x86_64-v3-crt-beam|winbuild-crt-source)-[0-9]{8}\.zip', name)
+              assert hashlib.sha256(Path(name).read_bytes()).hexdigest() == digest, name
+              with zipfile.ZipFile(name) as archive:
+                  assert archive.testzip() is None, name
+              names.append(name)
+          assert len(set(names)) == 2
+          assert set(names) == {p.name for p in Path('.').glob('*.zip')}
+          assert any(name.startswith('mpv-x86_64-v3-crt-beam-') for name in names)
+          assert any(name.startswith('mpv-winbuild-crt-source-') for name in names)
+          assert re.fullmatch(r'[0-9a-f]{40}', Path('source-commit.txt').read_text().strip())
+          assert re.fullmatch(r'crt-beam-reference-[0-9]{8}(?:-[a-zA-Z0-9._-]+)?', Path('tag.txt').read_text().strip())
+          PY
+
+      - name: Publish reference release
+        working-directory: release-assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          commit=$(cat source-commit.txt)
+          tag=$(cat tag.txt)
+          gh api "repos/$GH_REPO/commits/$commit" --jq '.sha' | grep -Fx "$commit"
+          gh release create "$tag" *.zip SHA256SUMS.txt \
+            --target "$commit" \
+            --title 'CRT Electron Beam Simulator: referencia Windows x86-64-v3' \
+            --notes-file release-notes.md --prerelease --latest=false

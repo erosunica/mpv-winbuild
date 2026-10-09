@@ -13,6 +13,11 @@ implementation only in the Codex cloud workspace.
 - Deliver requested builds through GitHub release assets or Actions artifacts.
   Check the published files and provide GitHub links; local workspace paths are
   not published download links.
+- If direct release uploads are unavailable, the `Publish CRT reference`
+  workflow can publish verified ZIP files from a temporary
+  `codex/crt-reference-assets/<delivery-id>` branch. Remove that temporary branch
+  after confirming successful publication; keep the binary payload out of the
+  history of `main`.
 - If authentication, permissions, or platform restrictions prevent publication,
   preserve the local commit and report the specific blocker. Never claim that
   changes or builds are published before verifying the remote result.
