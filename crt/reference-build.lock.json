@@ -1,0 +1,72 @@
+{
+  "freetype": {
+    "repo": "https://github.com/freetype/freetype.git",
+    "revision": "42608f77f20749dd6ddc9e0536788eaad70ea4b5",
+    "url": "https://codeload.github.com/freetype/freetype/tar.gz/42608f77f20749dd6ddc9e0536788eaad70ea4b5",
+    "sha256": "68ce87bb59ea209eb7350f41a94a27519ce16b37011b475a1e62d4abee154b66"
+  },
+  "fribidi": {
+    "repo": "https://github.com/fribidi/fribidi.git",
+    "revision": "68162babff4f39c4e2dc164a5e825af93bda9983",
+    "url": "https://codeload.github.com/fribidi/fribidi/tar.gz/68162babff4f39c4e2dc164a5e825af93bda9983",
+    "sha256": "fa34a057a414c85f7e1f3c0fd717bc93d74d370ed474ef2feca90868b4938f72"
+  },
+  "harfbuzz": {
+    "repo": "https://github.com/harfbuzz/harfbuzz.git",
+    "revision": "33a3f8de60dcad7535f14f07d6710144548853ac",
+    "url": "https://codeload.github.com/harfbuzz/harfbuzz/tar.gz/33a3f8de60dcad7535f14f07d6710144548853ac",
+    "sha256": "326e6c3e0fdab4e9a3df8c6daeb6251a6a8997711a58bf4f8da421195d279bf9"
+  },
+  "libass": {
+    "repo": "https://github.com/libass/libass.git",
+    "revision": "bbb3c7f1570a4a021e52683f3fbdf74fe492ae84",
+    "url": "https://codeload.github.com/libass/libass/tar.gz/bbb3c7f1570a4a021e52683f3fbdf74fe492ae84",
+    "sha256": "93796cd47cc878220f3466352315888daba8a48d673cdd8c44350b26f516e064"
+  },
+  "luajit": {
+    "repo": "https://github.com/LuaJIT/LuaJIT.git",
+    "revision": "c6ffc141a8762b41703f9287d63d93622a13dd8f",
+    "url": "https://codeload.github.com/LuaJIT/LuaJIT/tar.gz/c6ffc141a8762b41703f9287d63d93622a13dd8f",
+    "sha256": "6e5fec07750add912e7c3eae0c194d24cd6d023714e1f04a0298a5b4819e4457"
+  },
+  "ffmpeg": {
+    "repo": "https://github.com/FFmpeg/FFmpeg.git",
+    "revision": "894da5ca7d742e4429ffb2af534fcda0103ef593",
+    "url": "https://codeload.github.com/FFmpeg/FFmpeg/tar.gz/refs/tags/n8.0.1",
+    "sha256": "679aa13a19415d5ddab91e580084e3ab20c963c8240001e5cbb955a97bdd81b1"
+  },
+  "shaderc": {
+    "repo": "https://github.com/google/shaderc.git",
+    "revision": "ba3e587dbc13d423c713e964ac08e094731a034d",
+    "third_party": [
+      [
+        "glslang",
+        "KhronosGroup/glslang",
+        "e1b562a8bed273a02f30b59b66a5d499793cede5"
+      ],
+      [
+        "spirv-headers",
+        "KhronosGroup/SPIRV-Headers",
+        "04fd3caa1e8267e4d95c806cad901181728e1006"
+      ],
+      [
+        "spirv-tools",
+        "KhronosGroup/SPIRV-Tools",
+        "ef96ed763b43b59b33b31b362f09a02b729fa1c9"
+      ]
+    ]
+  },
+  "spirv-cross": {
+    "repo": "https://github.com/KhronosGroup/SPIRV-Cross.git",
+    "revision": "aa217aeb6c9f0ace7a0ab233b28807edf45eb165"
+  },
+  "vulkan-headers": {
+    "repo": "https://github.com/KhronosGroup/Vulkan-Headers.git",
+    "revision": "6802bb4733b63ed5efd3adb308a6c885ef180ea1"
+  },
+  "llvm-mingw": {
+    "version": "20261006",
+    "url": "https://github.com/mstorsjo/llvm-mingw/releases/download/20261006/llvm-mingw-20261006-ucrt-ubuntu-22.04-x86_64.tar.xz",
+    "sha256": "5f9c6ed95b2d4bdb2869a488c5fd5857fbdabcf288a0aa3eb1da43f6a08d8ab4"
+  }
+}

@@ -1,5 +1,6 @@
 #!/bin/bash
-set -x
+set -ex -o pipefail
+crt_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 main() {
     gitdir=$(pwd)
@@ -75,6 +76,7 @@ build() {
         ninja -C $buildroot/build$bit rustup
     fi
     ninja -C $buildroot/build$bit update
+    ninja -C $buildroot/build$bit libplacebo-fullclean
     ninja -C $buildroot/build$bit mpv-fullclean
     
     ninja -C $buildroot/build$bit mpv
@@ -125,6 +127,7 @@ download_mpv_package() {
 }
 
 prepare() {
+    python3 "$crt_root/crt/prepare-build.py" "$gitdir"
     mkdir -p ./release
     if [ "$simple_package" != "true" ]; then
         cd ./release

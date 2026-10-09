@@ -4,7 +4,9 @@
 [![releases](https://img.shields.io/github/v/release/zhongfly/mpv-winbuild?cacheSeconds=1800)](https://github.com/zhongfly/mpv-winbuild/releases/latest)
 [![downloads](https://img.shields.io/github/downloads/zhongfly/mpv-winbuild/total?cacheSeconds=1800)](https://github.com/zhongfly/mpv-winbuild/releases)
 
-Use Github Action to build mpv for Windows with latest commit.
+Use Github Actions to build mpv for Windows. This branch includes a native
+Blur Busters CRT Electron Beam Simulator and pins the validated mpv/libplacebo
+revisions. See [CRT configuration, hardware guidance and validation](crt/README.md).
 
 Based on <https://github.com/shinchiro/mpv-winbuild-cmake>.
 

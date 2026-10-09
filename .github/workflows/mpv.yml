@@ -67,16 +67,13 @@ jobs:
       matrix_bit: ${{ steps.script.outputs.matrix_bit }}
       patch_note: ${{ steps.script.outputs.patch_note }}
     steps:
+      - uses: actions/checkout@v7
       - id: script
         uses: actions/github-script@v9
         with:
           script: |
-            const commit = await github.rest.repos.getCommit({
-              owner: 'mpv-player',
-              repo: 'mpv',
-              ref: `master`
-            })
-            core.setOutput('sha', String(commit.data.sha))
+            const lock = JSON.parse(require('fs').readFileSync('crt/sources.lock.json', 'utf8'));
+            core.setOutput('sha', lock.mpv)
             
             let matrix = {};
             let build_target = "${{ inputs.build_target }}"
@@ -174,7 +171,6 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/archlinux/archlinux:base-devel
-    continue-on-error: true
     strategy:
       matrix: ${{ fromJson(needs.params.outputs.matrix) }}
 
@@ -197,6 +193,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: shinchiro/mpv-winbuild-cmake
+          ref: b2856ee6deed6957380b32465f359e67f67fafd8
           path: mpv-winbuild-cmake
           fetch-depth: 0
       - name: Prepare

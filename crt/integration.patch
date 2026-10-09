@@ -1,0 +1,284 @@
+diff --git a/DOCS/man/options.rst b/DOCS/man/options.rst
+index f0b9f7f..835d00d 100644
+--- a/DOCS/man/options.rst
++++ b/DOCS/man/options.rst
+@@ -6174,6 +6174,33 @@ them.
+     The slope of the sigmoid curve used for ``--sigmoid-upscaling``, must be a
+     float between 1.0 and 20.0. Defaults to 6.5 if not specified.
+ 
++``--crt-beam=<yes|no>``
++    Enable the Blur Busters CRT Electron Beam Simulator on ``gpu-next``.
++    Default: no. Requires SDR, display-sync and interpolation disabled.
++    A native:simulated CRT refresh ratio of at least 2:1 is required.
++    The effect operates on each presented refresh, with three owned cycle
++    images and a clock independent of video PTS. Pause shows a complete image.
++    If supported presentation feedback reports skipped refreshes, the effect
++    stays inactive until a reset (seek, resume or toggling the option).
++
++``--crt-beam-scans=<1|2>``
++    Number of simulated CRT refreshes per video frame. Default: 2.
++    This repeats the original source image without motion interpolation.
++    For 25 fps use a 100 Hz display; for 24000/1001 fps prefer 120000/1001 Hz.
++    The original playback speed is preserved with ``video-sync=display-vdrop``.
++
++``--crt-beam-gain=<0..1>``
++    Linear-light brightness versus persistence tradeoff. Default: 0 (automatic
++    gain = simulated CRT Hz / native display Hz, as in TestUFO Auto Calc).
++    A positive value selects a fixed gain. Lower values reduce persistence
++    and brightness; 1 preserves average energy at the cost of bright-pixel
++    persistence. The output transfer must match the SDR display response.
++
++``--crt-beam-debug=<yes|no>``
++    Log each CRT render's presentation index, cycle, latched source ID, phase,
++    native:CRT ratio and gain. Default: no. This is a diagnostic trace of
++    rendering/submission, not proof of physical scan-out on a display.
++
+ ``--interpolation``
+     Reduce stuttering caused by mismatches in the video fps and display refresh
+     rate (also known as judder).
+diff --git a/meson.build b/meson.build
+index c49aa3c..5ec3336 100644
+--- a/meson.build
++++ b/meson.build
+@@ -267,6 +267,7 @@ sources = files(
+     'video/out/placebo/utils.c',
+     'video/out/vo_gpu_next.c',
+     'video/out/gpu_next/context.c',
++    'video/out/gpu_next/crt_beam.c',
+ 
+     ## osdep
+     'osdep/io.c',
+@@ -605,6 +606,11 @@ sources += path_source + timer_source
+ tools_directory = join_paths(source_root, 'TOOLS')
+ docutils_wrapper = find_program(join_paths(tools_directory, 'docutils-wrapper.py'))
+ file2string = find_program(join_paths(tools_directory, 'file2string.py'))
++sources += custom_target('crt_beam_glsl.h',
++    input: 'video/out/gpu_next/crt_beam.glsl',
++    output: 'crt_beam_glsl.h',
++    command: [file2string, '@INPUT@', '@OUTPUT@', source_root],
++)
+ matroska = find_program(join_paths(tools_directory, 'matroska.py'))
+ mpv_desktop = find_program(join_paths(tools_directory, 'gen-mpv-desktop.py'))
+ 
+diff --git a/video/out/d3d11/context.c b/video/out/d3d11/context.c
+index fc8802e..b5cc2eb 100644
+--- a/video/out/d3d11/context.c
++++ b/video/out/d3d11/context.c
+@@ -122,6 +122,9 @@ struct priv {
+ 
+     int64_t perf_freq;
+     unsigned last_sync_refresh_count;
++    unsigned last_present_count;
++    unsigned last_present_refresh_count;
++    bool present_failed;
+     int64_t last_sync_qpc_time;
+     int64_t vsync_duration_qpc;
+     int64_t last_submit_qpc;
+@@ -289,7 +292,10 @@ static void d3d11_swap_buffers(struct ra_swapchain *sw)
+     QueryPerformanceCounter(&perf_count);
+     p->last_submit_qpc = perf_count.QuadPart;
+ 
+-    IDXGISwapChain_Present(p->swapchain, p->opts->sync_interval, 0);
++    HRESULT hr = IDXGISwapChain_Present(p->swapchain, p->opts->sync_interval, 0);
++    p->present_failed = FAILED(hr);
++    if (p->present_failed)
++        MP_ERR(sw->ctx, "D3D11 presentation failed: %s\n", mp_HRESULT_to_str(hr));
+ }
+ 
+ static void d3d11_get_vsync(struct ra_swapchain *sw, struct vo_vsync_info *info)
+@@ -299,6 +305,11 @@ static void d3d11_get_vsync(struct ra_swapchain *sw, struct vo_vsync_info *info)
+ 
+     m_config_cache_update(p->opts_cache);
+ 
++    if (p->present_failed) {
++        info->skipped_vsyncs = 1;
++        return;
++    }
++
+     // The calculations below are only valid if mpv presents on every vsync
+     if (p->opts->sync_interval != 1)
+         return;
+@@ -328,13 +339,29 @@ static void d3d11_get_vsync(struct ra_swapchain *sw, struct vo_vsync_info *info)
+     hr = IDXGISwapChain_GetFrameStatistics(p->swapchain, &stats);
+     if (hr == DXGI_ERROR_FRAME_STATISTICS_DISJOINT) {
+         p->last_sync_refresh_count = 0;
++        p->last_present_count = 0;
++        p->last_present_refresh_count = 0;
+         p->last_sync_qpc_time = 0;
+     }
+     if (FAILED(hr))
+         return;
+ 
+-    // Detecting skipped vsyncs is possible but not supported yet
++    // Compare physical refreshes with submitted-present IDs over the same
++    // completed interval. Repeated statistics are not a missed presentation.
++    // Unsigned subtraction handles the DXGI UINT counter wrap.
+     info->skipped_vsyncs = -1;
++    if (stats.PresentCount && stats.PresentRefreshCount) {
++        unsigned presents = stats.PresentCount - p->last_present_count;
++        unsigned refreshes = stats.PresentRefreshCount - p->last_present_refresh_count;
++        if (p->last_present_count && p->last_present_refresh_count && presents) {
++            // A reset/discontinuity must establish a new baseline, not report
++            // an implausibly large stall. Normal skips disable the CRT hook.
++            if (presents < 10000 && refreshes < 10000)
++                info->skipped_vsyncs = refreshes > presents ? refreshes - presents : 0;
++        }
++        p->last_present_count = stats.PresentCount;
++        p->last_present_refresh_count = stats.PresentRefreshCount;
++    }
+ 
+     // Get the number of physical vsyncs that have passed since the last call.
+     // Check for 0 here, since sometimes GetFrameStatistics returns S_OK but
+diff --git a/video/out/vo_gpu_next.c b/video/out/vo_gpu_next.c
+index bd3d1aa..a4e8aca 100644
+--- a/video/out/vo_gpu_next.c
++++ b/video/out/vo_gpu_next.c
+@@ -50,6 +50,7 @@
+ #include "gpu/video_shaders.h"
+ #include "sub/osd.h"
+ #include "gpu_next/context.h"
++#include "gpu_next/crt_beam.h"
+ 
+ #if HAVE_GL && defined(PL_HAVE_OPENGL)
+ #include <libplacebo/opengl.h>
+@@ -178,12 +179,15 @@ struct priv {
+     struct frame_info perf_redraw;
+ 
+     struct mp_image_params target_params;
++    struct mp_crt_beam *crt_beam;
++    bool crt_submitted;
+ };
+ 
+ static void update_render_options(struct vo *vo);
+ static void update_lut(struct priv *p, struct user_lut *lut);
+ 
+ struct gl_next_opts {
++    struct mp_crt_beam_opts crt;
+     bool delayed_peak;
+     int sub_hdr_peak;
+     int image_subs_hdr_peak;
+@@ -211,6 +215,10 @@ const struct m_opt_choice_alternatives lut_types[] = {
+ #define OPT_BASE_STRUCT struct gl_next_opts
+ const struct m_sub_options gl_next_conf = {
+     .opts = (const struct m_option[]) {
++        {"crt-beam", OPT_BOOL(crt.enabled)},
++        {"crt-beam-scans", OPT_INT(crt.scans), M_RANGE(1, 2)},
++        {"crt-beam-gain", OPT_FLOAT(crt.gain), M_RANGE(0, 1)},
++        {"crt-beam-debug", OPT_BOOL(crt.debug)},
+         {"sub-hdr-peak", OPT_CHOICE(sub_hdr_peak, {"auto", 0}, {"sdr", PL_COLOR_SDR_WHITE}),
+             M_RANGE(10, 10000)},
+         {"image-subs-hdr-peak", OPT_CHOICE(image_subs_hdr_peak, {"sdr", PL_COLOR_SDR_WHITE},
+@@ -237,6 +245,7 @@ const struct m_sub_options gl_next_conf = {
+         {0},
+     },
+     .defaults = &(struct gl_next_opts) {
++        .crt = {.scans = 2},
+         .border_background = BACKGROUND_COLOR,
+         .background_blur_radius = 16.0f,
+         .inter_preserve = true,
+@@ -1401,6 +1410,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+         int id = frame->frame_id + n;
+ 
+         if (p->want_reset) {
++            mp_crt_beam_reset(p->crt_beam);
+             pl_queue_reset(p->queue);
+             p->last_pts = 0.0;
+             p->last_id = 0;
+@@ -1747,6 +1757,22 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
+             update_hook_opts_dynamic(p, p->hooks[i], frame->current);
+     }
+ 
++    // The CRT hook runs at OUTPUT even when this source frame is cached.
++    double source_fps = frame->current ? frame->current->nominal_fps : 0;
++    if (source_fps <= 0 && frame->approx_duration > 0)
++        source_fps = 1.0 / frame->approx_duration;
++    mp_crt_beam_prepare(p->crt_beam, &p->next_opts->crt,
++        &(struct mp_crt_beam_frame){
++            .timed = frame->current && frame->display_synced && !frame->still &&
++                     !p->paused && !opts->interpolation,
++            .stationary = p->paused || frame->still,
++            .source_id = frame->frame_id,
++            .pts = frame->current ? frame->current->pts : 0,
++            .source_fps = source_fps,
++            .display_hz = frame->vsync_interval > 0 ? 1.0 / frame->vsync_interval : 0,
++            .screen_height = swframe.fbo->params.h,
++        });
++
+     // Render frame
+     stats_time_start(p->stats, "render");
+     bool render_ok = pl_render_image_mix(p->rr, &mix, &target, &params);
+@@ -1796,12 +1822,16 @@ static void flip_page(struct vo *vo)
+     struct ra_swapchain *sw = p->ra_ctx->swapchain;
+ 
+     if (p->frame_pending) {
+-        if (!pl_swapchain_submit_frame(p->sw))
++        bool submitted = pl_swapchain_submit_frame(p->sw);
++        p->crt_submitted = submitted;
++        if (!submitted)
+             MP_ERR(vo, "Failed presenting frame!\n");
+         p->frame_pending = false;
+     }
+ 
+     sw->fns->swap_buffers(sw);
++    mp_crt_beam_present(p->crt_beam, p->crt_submitted);
++    p->crt_submitted = false;
+ }
+ 
+ static void get_vsync(struct vo *vo, struct vo_vsync_info *info)
+@@ -1810,6 +1840,7 @@ static void get_vsync(struct vo *vo, struct vo_vsync_info *info)
+     struct ra_swapchain *sw = p->ra_ctx->swapchain;
+     if (sw->fns->get_vsync)
+         sw->fns->get_vsync(sw, info);
++    mp_crt_beam_skipped(p->crt_beam, info->skipped_vsyncs);
+ }
+ 
+ static int query_format(struct vo *vo, int format)
+@@ -1841,6 +1872,7 @@ static void resize(struct vo *vo)
+         osd_res_equals(p->osd_res, osd))
+         return;
+ 
++    mp_crt_beam_reset(p->crt_beam);
+     p->osd_sync++;
+     p->osd_res = osd;
+     p->src = src;
+@@ -2177,11 +2209,13 @@ static int control(struct vo *vo, uint32_t request, void *data)
+         resize(vo);
+         return VO_TRUE;
+     case VOCTRL_PAUSE:
+-        if (p->is_interpolated)
++        if (p->is_interpolated || p->next_opts->crt.enabled)
+             vo->want_redraw = true;
++        mp_crt_beam_reset(p->crt_beam);
+         p->paused = true;
+         return VO_TRUE;
+     case VOCTRL_RESUME:
++        mp_crt_beam_reset(p->crt_beam);
+         p->paused = false;
+         return VO_TRUE;
+ 
+@@ -2468,6 +2502,7 @@ static void uninit(struct vo *vo)
+         pl_tex_destroy(p->gpu, &p->osd_state.entries[i].tex);
+     for (int i = 0; i < p->num_sub_tex; i++)
+         pl_tex_destroy(p->gpu, &p->sub_tex[i]);
++    mp_crt_beam_destroy(&p->crt_beam);
+     for (int i = 0; i < p->num_user_hooks; i++)
+         pl_mpv_user_shader_destroy(&p->user_hooks[i].hook);
+ 
+@@ -2559,6 +2594,7 @@ static int preinit(struct vo *vo)
+     p->osd_fmt[SUBBITMAP_BGRA] = pl_find_named_fmt(p->gpu, "bgra8");
+     p->osd_sync = 1;
+ 
++    p->crt_beam = mp_crt_beam_create(p, p->log, p->gpu);
+     p->pars = pl_options_alloc(p->pllog);
+     update_render_options(vo);
+     return 0;
+@@ -2984,6 +3020,9 @@ AV_NOWARN_DEPRECATED(
+         }
+     }
+ 
++    if (p->next_opts->crt.enabled)
++        MP_TARRAY_APPEND(p, p->hooks, pars->params.num_hooks,
++                        mp_crt_beam_hook(p->crt_beam));
+     pars->params.hooks = p->hooks;
+ 
+     MP_DBG(p, "Render options updated, flushing renderer cache.\n");
